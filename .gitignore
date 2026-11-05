@@ -1,3 +1,6 @@
 # Written by the engine when the mod loads, for the editor only.
 .claude-plugin/types/
 tsconfig.json
+
+# Diagnostic probes written by an instrumented build.
+.probe-*
