@@ -1,6 +1,7 @@
 param(
   [string]$Session = 'last',
   [int]$GraceMs = 600,
+  [int]$SettleMs = 1200,
   [switch]$Detached,
   [switch]$DryRun
 )
@@ -30,14 +31,14 @@ function New-DetachedProcess([string]$CommandLine) {
 if (-not $Detached) {
   Note "bootstrap (session=$Session, dryrun=$DryRun)"
   $self = $PSCommandPath
-  $cmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$self`" -Session $Session -GraceMs $GraceMs -Detached"
+  $cmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$self`" -Session $Session -GraceMs $GraceMs -SettleMs $SettleMs -Detached"
   if ($DryRun) { $cmd = $cmd + ' -DryRun' }
   $res = New-DetachedProcess $cmd
   Note "handed off via WMI rv=$($res.ReturnValue) pid=$($res.ProcessId)"
   exit 0
 }
 
-Note "detached start (session=$Session, grace=${GraceMs}ms)"
+Note "detached start (session=$Session, grace=${GraceMs}ms, settle=${SettleMs}ms)"
 
 $pkg = Get-AppxPackage -Name 'Claude' | Select-Object -First 1
 if (-not $pkg) { Note 'Claude package not found; aborting'; exit 1 }
@@ -90,9 +91,14 @@ Note "killed ($($left.Count) forced); $(@(Targets).Count) still up"
 # process's console: its stdout would appear in a stray PowerShell window, and
 # closing that window would close the app with it.
 #
-# The package's single-instance lock may not be released the instant the last
-# process goes, so retry rather than sleeping a fixed guess up front.
-foreach ($attempt in 1..3) {
+# The package needs a moment after its last process goes before Windows will
+# activate it again. Fire the deep link too early and the shell has no handler
+# to give it to: it opens a plain File Explorer window instead, and the app can
+# come up without its plugins. This settle window is the price of that; it is
+# measured in the log, so it can be tuned rather than guessed at.
+Start-Sleep -Milliseconds $SettleMs
+
+foreach ($attempt in 1..2) {
   $res = New-DetachedProcess "explorer.exe `"$url`""
   Note "activation attempt $attempt rv=$($res.ReturnValue)"
   $deadline = (Get-Date).AddMilliseconds(2500)
