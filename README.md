@@ -52,6 +52,15 @@ next to the prompt box, then **Plugins**, **Add marketplace** with
    to: you get a plain File Explorer window instead of the app, and the app
    can come up without its plugins loaded.
 5. If the app is still not back it falls back to `shell:AppsFolder`.
+6. Once a main window exists, it is raised to the foreground.
+
+Step 6 is needed because Windows only lets a process raise a window if it owns
+the foreground, and nothing in this chain does — the helper is parented to
+`WmiPrvSE` and has no input of its own. Without it the app comes back *behind*
+everything with its taskbar button lit, waiting for a click. The helper waives
+its own claim with `AllowSetForegroundWindow(ASFW_ANY)` before activating, then
+borrows the foreground thread's input state with `AttachThreadInput` so the
+raise is permitted.
 
 Every log line carries a `+NNNms` offset, so the cost of each phase is visible.
 The script's own overhead is roughly 1.5 s; the rest of a restart is the app's
