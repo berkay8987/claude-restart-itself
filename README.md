@@ -39,14 +39,23 @@ next to the prompt box, then **Plugins**, **Add marketplace** with
 
 1. Hands off to `scripts/restart.ps1`, which immediately re-launches itself
    through WMI (see below) and exits.
-2. The surviving helper calls `CloseMainWindow()` on every Claude process, so
-   the app saves its state, and waits up to 8 seconds.
-3. Anything still up is force-killed, and it waits for the process table to
-   actually clear.
-4. After a short pause for the package's single-instance lock, it asks
-   `explorer.exe` to open `claude://code/continue?session=last`.
-5. If the app is not back within 12 seconds it retries through
-   `shell:AppsFolder`.
+2. The surviving helper calls `CloseMainWindow()` on the windowed Claude
+   processes and gives them a 600 ms grace period.
+3. Anything still up is force-killed, and it polls at 50 ms until the process
+   table is clear.
+4. It asks `explorer.exe` to open `claude://code/continue?session=last`,
+   retrying up to three times if the package's single-instance lock has not
+   been released yet.
+5. If the app is still not back it falls back to `shell:AppsFolder`.
+
+Every log line carries a `+NNNms` offset, so the cost of each phase is visible.
+The script's own overhead is roughly 1.5 s; the rest of a restart is the app's
+own cold start, which nothing here can speed up.
+
+An earlier version waited a flat 8 seconds for a graceful close and then force-
+killed everything anyway — on this machine all 12 processes were force-killed
+on every single run, so the wait bought nothing. It also slept a fixed 2 s for
+the instance lock instead of retrying. Removing both took about 10 seconds off.
 
 Each step is appended to `%TEMP%\restart-claude.log`, which is the first place
 to look if a restart stalls. Run the script with `-DryRun` to see what it would
