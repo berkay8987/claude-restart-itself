@@ -94,10 +94,28 @@ rejects the first and PowerShell will not run under the second.
 - **It closes the whole app**, not just one session. Other sessions get a
   graceful close first, so they should save, but unsaved work elsewhere is at
   risk.
-- **Only one hook may draw the band.** This one draws whatever the engine and
-  other plugins put there and pushes the button to the right of it, so it
-  shares rather than takes over — but if another plugin's band hook runs above
-  this one and returns its own tree, the button will not appear.
+- **Only one hook may draw the band, and order decides who wins.** This mod
+  draws whatever the engine and other plugins put there and pushes the button
+  to the right of it, so it shares rather than takes over. But a band hook that
+  returns its own tree *without* calling `next(e)` ends the chain, and every
+  hook below it never runs. If the button does not appear, that is almost
+  certainly why.
+
+  Hook order follows the key order of `enabledPlugins` in `~/.claude/settings.json`.
+  Move `restart-button@restart-button` to the top of that object to put it
+  above a mod that ends the chain:
+
+  ```json
+  {
+    "enabledPlugins": {
+      "restart-button@restart-button": true,
+      "some-other-mod@its-marketplace": true
+    }
+  }
+  ```
+
+  A known example is `token-weather`, whose `AbovePrompt` hook returns its band
+  directly. Any well-behaved band mod below it is hidden, not just this one.
 
 ## Layout
 
