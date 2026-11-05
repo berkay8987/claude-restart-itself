@@ -1,0 +1,6 @@
+{
+  "name": "restart-button",
+  "description": "A one-press restart for Claude Code Desktop that reopens the session you were in.",
+  "owner": { "name": "berkay8987" },
+  "plugins": [{ "name": "restart-button", "source": "./" }]
+}
