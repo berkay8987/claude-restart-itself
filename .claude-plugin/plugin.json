@@ -1,6 +1,6 @@
 {
   "name": "restart-button",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A restart icon at the right end of the band above the prompt: closes Claude Desktop and reopens it on the session you were in.",
   "license": "MIT"
 }

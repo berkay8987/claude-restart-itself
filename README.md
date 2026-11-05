@@ -43,10 +43,10 @@ next to the prompt box, then **Plugins**, **Add marketplace** with
    the app saves its state, and waits up to 8 seconds.
 3. Anything still up is force-killed, and it waits for the process table to
    actually clear.
-4. After a short pause for the package's single-instance lock, it opens
-   `claude://code/continue?session=last`.
-5. If the app is not back within 10 seconds it retries through `explorer.exe`,
-   and then through `shell:AppsFolder`.
+4. After a short pause for the package's single-instance lock, it asks
+   `explorer.exe` to open `claude://code/continue?session=last`.
+5. If the app is not back within 12 seconds it retries through
+   `shell:AppsFolder`.
 
 Each step is appended to `%TEMP%\restart-claude.log`, which is the first place
 to look if a restart stalls. Run the script with `-DryRun` to see what it would
@@ -71,6 +71,16 @@ outside the job, and it survives:
 | `Invoke-CimMethod Win32_Process Create` | WmiPrvSE | no | yes |
 
 That is the whole trick, and it is the only reason this mod works.
+
+There is a second, related trap. The helper must not start the app itself: the
+new app process would share the helper's console, so Claude's stdout appears in
+a stray PowerShell window, and closing that window closes Claude with it. So
+the helper hands the activation to `explorer.exe`, which passes it to the
+already-running shell and exits, leaving no console anywhere in the app's
+ancestry. The helper's own console is created hidden (`ShowWindow = 0` via
+`Win32_ProcessStartup`), so nothing flashes up either. `CREATE_NO_WINDOW` and
+`DETACHED_PROCESS` both look like the right answer here and neither works: WMI
+rejects the first and PowerShell will not run under the second.
 
 ## Known limits
 

@@ -9,15 +9,26 @@ $ErrorActionPreference = 'SilentlyContinue'
 $log = Join-Path $env:TEMP 'restart-claude.log'
 function Note($m) { "$(Get-Date -Format o) [$PID] $m" | Out-File -FilePath $log -Append -Encoding utf8 }
 
+# Create a process that is outside this app's job object (see below), with its
+# console window hidden so nothing flashes up or lingers on screen.
+function New-DetachedProcess([string]$CommandLine) {
+  $startup = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ ShowWindow = [uint16]0 }
+
+  return Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
+    CommandLine               = $CommandLine
+    ProcessStartupInformation = $startup
+  }
+}
+
 # The app runs its children inside a job object, and killing the app tears the
 # whole job down -- a Start-Process child dies with it. A process created
 # through WMI is parented to WmiPrvSE and is outside the job, so it survives.
 if (-not $Detached) {
   Note "bootstrap (session=$Session, dryrun=$DryRun)"
   $self = $PSCommandPath
-  $cmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$self`" -Session $Session -Detached"
+  $cmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$self`" -Session $Session -Detached"
   if ($DryRun) { $cmd = $cmd + ' -DryRun' }
-  $res = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $cmd }
+  $res = New-DetachedProcess $cmd
   Note "handed off via WMI rv=$($res.ReturnValue) pid=$($res.ProcessId)"
   exit 0
 }
@@ -84,18 +95,18 @@ function WaitUp([int]$seconds) {
   return $false
 }
 
-Note "launching $url"
-Start-Process $url
-if (WaitUp 10) { Note 'up (deep link)'; exit 0 }
+# Hand the activation to explorer, which passes it to the running shell and
+# exits. Starting the app from here instead would leave it sharing this
+# process's console: its stdout would appear in a stray PowerShell window, and
+# closing that window would close the app with it.
+Note "launching $url via explorer"
+$res = New-DetachedProcess "explorer.exe `"$url`""
+Note "explorer rv=$($res.ReturnValue) pid=$($res.ProcessId)"
+if (WaitUp 12) { Note 'up (explorer url)'; exit 0 }
 
-# ShellExecute from a WMI-parented process can miss the desktop; explorer is
-# already on it and handles both protocol and package activation.
-Note 'deep link did not take; trying explorer with the url'
-Start-Process 'explorer.exe' -ArgumentList $url
-if (WaitUp 10) { Note 'up (explorer url)'; exit 0 }
-
-Note 'still down; launching the package directly'
-Start-Process 'explorer.exe' -ArgumentList "shell:AppsFolder\$family!Claude"
+Note 'explorer did not take; launching the package directly'
+$res = New-DetachedProcess "explorer.exe `"shell:AppsFolder\$family!Claude`""
+Note "package rv=$($res.ReturnValue) pid=$($res.ProcessId)"
 if (WaitUp 15) { Note 'up (package)'; exit 0 }
 
 Note 'FAILED: app did not come back'
