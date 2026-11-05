@@ -39,11 +39,15 @@ next to the prompt box, then **Plugins**, **Add marketplace** with
 
 1. Hands off to `scripts/restart.ps1`, which immediately re-launches itself
    through WMI (see below) and exits.
-2. The surviving helper calls `CloseMainWindow()` on the windowed Claude
-   processes and gives them a 600 ms grace period.
-3. Anything still up is force-killed, and it polls at 50 ms until the process
+2. If the app itself started less than `-MinUptimeMs` ago (6 s by default), it
+   waits for the remainder. Killing the app mid-startup leaves it half
+   initialised and the next launch can come up with no plugins loaded — which
+   is what back-to-back restarts used to do.
+3. The helper calls `CloseMainWindow()` on the windowed Claude processes and
+   gives them a 600 ms grace period.
+4. Anything still up is force-killed, and it polls at 50 ms until the process
    table is clear.
-4. It waits a short settle window (`-SettleMs`, 1200 ms by default), then asks
+5. It waits a short settle window (`-SettleMs`, 1200 ms by default), then asks
    `explorer.exe` to open `claude://code/continue?session=last`, retrying once
    if the app does not appear.
 
@@ -51,16 +55,18 @@ next to the prompt box, then **Plugins**, **Add marketplace** with
    finished tearing the package down and the shell has no handler to give it
    to: you get a plain File Explorer window instead of the app, and the app
    can come up without its plugins loaded.
-5. If the app is still not back it falls back to `shell:AppsFolder`.
-6. Once a main window exists, it is raised to the foreground.
+6. If the app is still not back it falls back to `shell:AppsFolder`.
+7. Once a main window exists, it is raised to the foreground.
 
-Step 6 is needed because Windows only lets a process raise a window if it owns
+That last step is needed because Windows only lets a process raise a window if it owns
 the foreground, and nothing in this chain does — the helper is parented to
 `WmiPrvSE` and has no input of its own. Without it the app comes back *behind*
 everything with its taskbar button lit, waiting for a click. The helper waives
 its own claim with `AllowSetForegroundWindow(ASFW_ANY)` before activating, then
 borrows the foreground thread's input state with `AttachThreadInput` so the
-raise is permitted.
+raise is permitted. It only un-minimises a window that is actually minimised:
+`SW_RESTORE` un-maximises a maximised one, so calling it unconditionally shrinks
+a window that was fine.
 
 Every log line carries a `+NNNms` offset, so the cost of each phase is visible.
 The script's own overhead is roughly 1.5 s; the rest of a restart is the app's

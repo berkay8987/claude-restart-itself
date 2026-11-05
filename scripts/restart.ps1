@@ -2,6 +2,7 @@ param(
   [string]$Session = 'last',
   [int]$GraceMs = 600,
   [int]$SettleMs = 1200,
+  [int]$MinUptimeMs = 6000,
   [switch]$Detached,
   [switch]$DryRun
 )
@@ -31,7 +32,7 @@ function New-DetachedProcess([string]$CommandLine) {
 if (-not $Detached) {
   Note "bootstrap (session=$Session, dryrun=$DryRun)"
   $self = $PSCommandPath
-  $cmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$self`" -Session $Session -GraceMs $GraceMs -SettleMs $SettleMs -Detached"
+  $cmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$self`" -Session $Session -GraceMs $GraceMs -SettleMs $SettleMs -MinUptimeMs $MinUptimeMs -Detached"
   if ($DryRun) { $cmd = $cmd + ' -DryRun' }
   $res = New-DetachedProcess $cmd
   Note "handed off via WMI rv=$($res.ReturnValue) pid=$($res.ProcessId)"
@@ -47,6 +48,7 @@ Note "detached start (session=$Session, grace=${GraceMs}ms, settle=${SettleMs}ms
 Add-Type -Namespace Fg -Name Win -MemberDefinition @"
 [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
 [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
+[DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
 [DllImport("user32.dll")] public static extern void SwitchToThisWindow(IntPtr hWnd, bool fAltTab);
 [DllImport("user32.dll")] public static extern bool AllowSetForegroundWindow(int dwProcessId);
 [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
@@ -56,8 +58,12 @@ Add-Type -Namespace Fg -Name Win -MemberDefinition @"
 "@
 
 function Raise-Window([IntPtr]$hwnd) {
-  $SW_RESTORE = 9
-  $null = [Fg.Win]::ShowWindowAsync($hwnd, $SW_RESTORE)
+  # SW_RESTORE un-maximises a maximised window, so only use it on a minimised
+  # one. The app restores its own size and state; this must not override it.
+  if ([Fg.Win]::IsIconic($hwnd)) {
+    $SW_RESTORE = 9
+    $null = [Fg.Win]::ShowWindowAsync($hwnd, $SW_RESTORE)
+  }
 
   # Borrow the foreground thread's input state so the raise is permitted.
   $fore = [Fg.Win]::GetForegroundWindow()
@@ -118,6 +124,23 @@ $url = "claude://code/continue?session=$Session"
 if ($DryRun) {
   Note "DRY RUN: would close $(@(Targets).Count) process(es), then launch $url"
   exit 0
+}
+
+# Killing the app while it is still starting leaves it half-initialised, and the
+# next launch can come up without its plugins. On a back-to-back restart the app
+# is only seconds old, so wait until it has had time to finish before killing it.
+# The app's own launch time is its OLDEST process; the claude-code engines come
+# and go per session, so the youngest process says nothing about app uptime.
+$appStart = @(Get-Process -Name claude -ErrorAction SilentlyContinue | Where-Object {
+  $_.Path -and $_.Path.StartsWith($install, [System.StringComparison]::OrdinalIgnoreCase) -and $_.StartTime
+} | Sort-Object StartTime | Select-Object -First 1)
+if ($appStart.Count -gt 0) {
+  $ageMs = ((Get-Date) - $appStart[0].StartTime).TotalMilliseconds
+  if ($ageMs -lt $MinUptimeMs) {
+    $waitMs = [int]($MinUptimeMs - $ageMs)
+    Note "app is only $([int]$ageMs)ms old; waiting ${waitMs}ms so it finishes starting"
+    Start-Sleep -Milliseconds $waitMs
+  }
 }
 
 # A courtesy close, then force. Measured over many runs, every process always
