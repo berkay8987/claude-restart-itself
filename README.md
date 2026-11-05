@@ -39,24 +39,17 @@ next to the prompt box, then **Plugins**, **Add marketplace** with
 
 1. Hands off to `scripts/restart.ps1`, which immediately re-launches itself
    through WMI (see below) and exits.
-2. If the app itself started less than `-MinUptimeMs` ago (6 s by default), it
-   waits for the remainder. Killing the app mid-startup leaves it half
-   initialised and the next launch can come up with no plugins loaded — which
-   is what back-to-back restarts used to do.
-3. The helper calls `CloseMainWindow()` on the windowed Claude processes and
+2. The helper calls `CloseMainWindow()` on the windowed Claude processes and
    gives them a 600 ms grace period.
-4. Anything still up is force-killed, and it polls at 50 ms until the process
+3. Anything still up is force-killed, and it polls at 50 ms until the process
    table is clear.
-5. It waits a short settle window (`-SettleMs`, 1200 ms by default), then asks
-   `explorer.exe` to open `claude://code/continue?session=last`, retrying once
-   if the app does not appear.
-
-   The settle window is not padding. Fire the deep link before Windows has
-   finished tearing the package down and the shell has no handler to give it
-   to: you get a plain File Explorer window instead of the app, and the app
-   can come up without its plugins loaded.
-6. If the app is still not back it falls back to `shell:AppsFolder`.
-7. Once a main window exists, it is raised to the foreground.
+4. After a brief settle (`-SettleMs`, 250 ms), it asks `explorer.exe` to open
+   `claude://code/continue?session=last`, retrying once if the app does not
+   appear. The retry, not the sleep, is what covers an activation that lands
+   before Windows is ready — raise `-SettleMs` if a restart ever fails on the
+   first attempt.
+5. If the app is still not back it falls back to `shell:AppsFolder`.
+6. Once a main window exists, it is raised to the foreground.
 
 That last step is needed because Windows only lets a process raise a window if it owns
 the foreground, and nothing in this chain does — the helper is parented to
@@ -71,6 +64,18 @@ a window that was fine.
 Every log line carries a `+NNNms` offset, so the cost of each phase is visible.
 The script's own overhead is roughly 1.5 s; the rest of a restart is the app's
 own cold start, which nothing here can speed up.
+
+## Mods are not loaded until you prompt
+
+After a restart the band can be empty until you send your first prompt. That is
+not this mod misbehaving. Mods run inside the `claude-code` engine, and the
+desktop app starts that engine lazily, claiming a parked spare when the session
+is first used. Measured on one restart: the app process started at 21:44:25 and
+the engine at 21:45:26 — a full minute later, at the first prompt. Nothing in
+this script can force the claim, and the mod itself cannot either, since it
+lives inside the engine that has not started.
+
+## History
 
 An earlier version waited a flat 8 seconds for a graceful close and then force-
 killed everything anyway — on this machine all 12 processes were force-killed

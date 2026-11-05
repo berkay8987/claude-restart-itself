@@ -1,8 +1,8 @@
 param(
   [string]$Session = 'last',
   [int]$GraceMs = 600,
-  [int]$SettleMs = 1200,
-  [int]$MinUptimeMs = 6000,
+  [int]$SettleMs = 250,
+  [int]$MinUptimeMs = 0,
   [switch]$Detached,
   [switch]$DryRun
 )
@@ -126,9 +126,11 @@ if ($DryRun) {
   exit 0
 }
 
-# Killing the app while it is still starting leaves it half-initialised, and the
-# next launch can come up without its plugins. On a back-to-back restart the app
-# is only seconds old, so wait until it has had time to finish before killing it.
+# Optional floor on app uptime before killing (-MinUptimeMs, off by default).
+# This was added believing a fast second press killed the app mid-startup and
+# cost it its plugins. It did not: mods live in the claude-code engine, which
+# the app starts lazily when the session is first used, so the band is simply
+# empty until then. Kept as a knob, not a default.
 # The app's own launch time is its OLDEST process; the claude-code engines come
 # and go per session, so the youngest process says nothing about app uptime.
 $appStart = @(Get-Process -Name claude -ErrorAction SilentlyContinue | Where-Object {
@@ -166,11 +168,10 @@ Note "killed ($($left.Count) forced); $(@(Targets).Count) still up"
 # process's console: its stdout would appear in a stray PowerShell window, and
 # closing that window would close the app with it.
 #
-# The package needs a moment after its last process goes before Windows will
-# activate it again. Fire the deep link too early and the shell has no handler
-# to give it to: it opens a plain File Explorer window instead, and the app can
-# come up without its plugins. This settle window is the price of that; it is
-# measured in the log, so it can be tuned rather than guessed at.
+# A brief pause so the package has a moment after its last process goes. It is
+# deliberately short: the retry loop below, not this sleep, is what covers an
+# activation that lands before Windows is ready. Raise -SettleMs if a restart
+# ever fails to bring the app back on the first attempt.
 Start-Sleep -Milliseconds $SettleMs
 
 # ASFW_ANY: waive our claim so the app being started may take the foreground.
